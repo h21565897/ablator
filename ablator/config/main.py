@@ -12,6 +12,7 @@ from ablator.config.types import (
     Dict,
     Enum,
     List,
+    Self,
     Stateless,
     Tuple,
     Type,
@@ -364,8 +365,7 @@ class ConfigBase:
         assert len(diffs) == 0, f"Differences between configurations:\n\t{diff}"
         return True
 
-    def merge(self, config: "ConfigBase") -> "ty.Self":  # type: ignore
-        # TODO ty.Self is currently supported by mypy? fixme above
+    def merge(self, config: "ConfigBase") -> Self:
         # replaces stateless and derived properties
         """
         Merge the current configuration object with another configuration object.
@@ -377,7 +377,7 @@ class ConfigBase:
 
         Returns
         -------
-        ty.Self
+        Self
             The merged configuration object.
 
         """
