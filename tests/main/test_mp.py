@@ -1,3 +1,4 @@
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -6,11 +7,25 @@ import mock
 import numpy as np
 import pytest
 import torch
+import socket
+from ablator.config.rclone import RemoteRcloneConfig
 
 from ablator.main.mp import ParallelTrainer, train_main_remote
 from ablator.main.state.store import TrialState
 from ablator.modules.loggers.file import FileLogger
 from ablator.mp.node_manager import NodeManager, Resource
+
+
+def get_node_ip_address():
+    """Get the IP address of the current node."""
+    addr = "8.8.8.8"  # You can use any reachable address here
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect((addr, 80))  # We only establish a connection, no data is sent
+        ip_address = sock.getsockname()[0]
+    finally:
+        sock.close()
+    return ip_address
 
 
 N_MOCK_NODES = 10
@@ -142,6 +157,14 @@ def test_mp_run(
     n_trials = 10
     config = make_config(tmp_path, search_space_limit=n_trials)
     config.experiment_dir = tmp_path
+    remote_path = tmp_path / "mntremote"
+    os.makedirs(remote_path, exist_ok=True)
+    config.remote_rclone_config = RemoteRcloneConfig(
+        host=get_node_ip_address(),
+        key_file="~/.ssh/id_rsa",
+        user="",
+        remote_path=str(remote_path),
+    )
     config.total_trials = n_trials
     ablator = ParallelTrainer(wrapper=error_wrapper, run_config=config)
     ablator.launch(working_dir)

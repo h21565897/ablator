@@ -1,5 +1,6 @@
 import copy
 import io
+import os
 import platform
 import random
 import re
@@ -65,12 +66,18 @@ def make_node(docker_client: docker.DockerClient, img, cluster_address):
                 {"driver": "nvidia", "count": -1, "capabilities": [["gpu"]]}
             ],
         )
+    fuse_args = dict(
+        cap_add=["SYS_ADMIN"],
+        devices=["/dev/fuse"],
+    )
+    container_args = {**cuda_args, **fuse_args}
     c = docker_client.containers.run(
-        img, command="/bin/bash", detach=True, tty=True, stdin_open=True, **cuda_args
+        img, command="/bin/bash", detach=True, tty=True, stdin_open=True, **container_args
     )
     res = c.exec_run(f"service ssh start")
     assert "Starting OpenBSD Secure Shell server" in res.output.decode()
     res = c.exec_run(f"ray start --address='{cluster_address}'")
+    pubkey = c.exec_run("cat /root/.ssh/id_rsa.pub").output.decode()
     _out = res.output.decode()
     assert "Ray runtime started." in _out
     node_ip = list(
@@ -82,7 +89,7 @@ def make_node(docker_client: docker.DockerClient, img, cluster_address):
         )
     )[0]
 
-    return c, node_ip
+    return c, node_ip, pubkey
 
 
 def build_docker_image(docker_client: docker.DockerClient):
@@ -112,6 +119,12 @@ class DockerRayCluster:
 
     def tearDown(self):
         self.kill_all()
+        with open(os.path.expanduser("~/.ssh/authorized_keys"), "r+", encoding="utf-8") as file:
+            lines = file.readlines()
+            lines = [line for line in lines if all(key not in line for key in self.client_keys)]
+            file.seek(0)
+            file.writelines(lines)
+            file.truncate()
 
     def setUp(self, working_dir):
         self.ray_was_init = False
@@ -129,7 +142,11 @@ class DockerRayCluster:
             self.cluster_ip, _ = self.cluster_address.split(":")
         self.img = get_docker_image(self.client)
         self.cs = {}
+        self.client_keys = []
         self.append_nodes(self.nodes)
+        with open(os.path.expanduser("~/.ssh/authorized_keys"), "a", encoding="utf-8") as file:
+            for key in self.client_keys:
+                file.write(key)
         time.sleep(1)
 
     @classmethod
@@ -150,8 +167,9 @@ class DockerRayCluster:
 
     def append_nodes(self, n=2):
         for _ in range(n):
-            c, ip = make_node(self.client, self.img, self.cluster_address)
+            c, ip, pubkey = make_node(self.client, self.img, self.cluster_address)
             self.cs[ip] = c
+            self.client_keys.append(pubkey)
 
     def kill_node(self, idx):
         ip = list(self.cs.keys())[idx]
@@ -163,9 +181,11 @@ class DockerRayCluster:
             v.kill()
         self.cs = {}
 
+
 @pytest.fixture(scope="function")
 def docker_ray_cluster():
     return DockerRayCluster
+
 
 @pytest.fixture(scope="function")
 def ray_cluster():

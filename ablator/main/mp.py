@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import ray
 import torch
+from ablator.modules.storage.rclone import RcloneConfig
 
 import ablator.utils.base as butils
 from ablator.config.mp import ParallelConfig
@@ -28,10 +29,12 @@ from ablator.mp.node_manager import NodeManager, Resource
 from ablator.mp.utils import _sorted_nodes_by_util
 from ablator.utils.base import get_gpu_mem
 from ablator.utils.progress_bar import RemoteDisplay, RemoteProgressBar
-
+from ablator.mp.utils import make_rclone_config
 
 # TODO refactor into a seperate file and reduce complexity
 # pylint: disable=too-complex,broad-exception-caught
+
+
 def train_main_remote(
     model: ModelWrapper,
     run_config: ParallelConfig,
@@ -155,6 +158,11 @@ def train_main_remote(
         return handle_exception(e)
     except builtins.Exception as e:
         return handle_exception(e)
+
+
+def mount_remote(rclone_config: RcloneConfig, experiment_dir: Path):
+    os.makedirs(experiment_dir, exist_ok=True)
+    rclone_config.startMount(experiment_dir)
 
 
 class ParallelTrainer(ProtoTrainer):
@@ -421,18 +429,9 @@ class ParallelTrainer(ProtoTrainer):
         excluding_files: list[str] | None = None,
     ):
         verbose = self.run_config.verbose
-
         if self.experiment_dir.exists() and not resume:
             raise RuntimeError(f"Experiment Directory {self.experiment_dir} exists.")
-        self.logger = RemoteFileLogger(
-            path=self.experiment_dir / "mp.log", verbose=verbose == "console"
-        )
-        self.experiment_dir.joinpath("default_config.yaml").write_text(
-            str(self.run_config), encoding="utf-8"
-        )
-        self.experiment_state = ExperimentState(
-            self.experiment_dir, self.run_config, self.logger, resume=resume
-        )
+        os.makedirs(self.experiment_dir)
         if excluding_files is None:
             excluding_files = [".git/**"]
 
@@ -442,7 +441,7 @@ class ParallelTrainer(ProtoTrainer):
             self._display = RemoteDisplay(self._progress_bar)  # type: ignore
 
         if ray.is_initialized():
-            self.logger.warn(
+            print(
                 "Ray is already initialized. Can not start another instance. "
                 "Unexpected behavior can occur. We recommend to perform `ray.shutdown()` "
                 "or `ray stop` before starting the experiment. "
@@ -477,6 +476,24 @@ class ParallelTrainer(ProtoTrainer):
             )
             self.ray_address = ray_cluster.address_info["address"]
         self.node_manager = NodeManager(private_key_home=Path.home())
+        make_rclone_config(self.run_config)
+        print("fwefkjwijfwfwejwjwjwjweojiwejwjwjowjfwjwiwe start mountttttt")
+        if self.run_config.rclone_config is not None:
+            print("3123124143affw start mountttttt")
+            for node_ip in self.node_manager.nodes:
+                print(f"31faewffwwwffeeeee start mounttdddd${node_ip}")
+                rclone_config_copy = copy.deepcopy(self.run_config.rclone_config)
+                experiment_dir = self.experiment_dir
+                self.node_manager.run_lambda(lambda: mount_remote(rclone_config_copy, experiment_dir), node_ip)
+        self.logger = RemoteFileLogger(
+            path=self.experiment_dir / "mp.log", verbose=verbose == "console"
+        )
+        self.experiment_dir.joinpath("default_config.yaml").write_text(
+            str(self.run_config), encoding="utf-8"
+        )
+        self.experiment_state = ExperimentState(
+            self.experiment_dir, self.run_config, self.logger, resume=resume
+        )
         self.logger.to_remote()
         # first heartbeat <3
         self._heartbeat()

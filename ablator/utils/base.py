@@ -278,9 +278,24 @@ def init_weights(module: nn.Module):
         module.weight.data.fill_(1.0)
 
 
+def _get_gpu_info() -> list[dict[str, ty.Any]]:
+    if smi is not None:
+        try:
+            instance = smi.getInstance()
+            device = instance.DeviceQuery()
+        # pylint: disable=broad-exception-caught
+        except Exception:
+            return []
+    else:
+        return []
+    if "gpu" not in device:
+        return []
+    return sorted(device["gpu"], key=lambda x: x["minor_number"])
+
+
 def get_gpu_mem(
     mem_type: ty.Literal["used", "total", "free"] = "total"
-) -> dict[str, int]:
+) -> dict[int, int]:
     """
     Get the memory information of all available GPUs.
 
@@ -291,24 +306,13 @@ def get_gpu_mem(
 
     Returns
     -------
-    list[int]
+    dict[int, int]
         A list of memory values for each GPU, depending on the specified memory type.
     """
-    memory: dict[str, int] = {}
-    if smi is not None:
-        try:
-            instance = smi.getInstance()
-            device = instance.DeviceQuery()
-        # pylint: disable=broad-exception-caught
-        except Exception:
-            pass
-    else:
-        return memory
-    if "gpu" not in device:
-        return memory
-    for gpu in device["gpu"]:
-        device_id = f"{gpu['product_name']}_{gpu['id']}"
-        memory[device_id] = int(gpu["fb_memory_usage"][mem_type])
+    memory: dict[int, int] = {}
+    gpus = _get_gpu_info()
+    for index, gpu in enumerate(gpus):
+        memory[index] = int(gpu["fb_memory_usage"][mem_type])
     return memory
 
 
